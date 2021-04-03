@@ -2,13 +2,17 @@
 // Title:	        Pico-mposite Video Output
 // Author:	        Dean Belfield
 // Created:	        26/01/2021
-// Last Updated:	15/02/2021
+// Changed by:      Daniel Quadros
+// Last Updated:	03/04/2021
 //
 // Modinfo:
 // 15/02/2021:      Border buffers now have horizontal sync pulse set correctly
 //                  Decreased RAM usage by updating the image buffer scanline on the fly during the horizontal interrupt
 //					Fixed logic error in cvideo_dma_handler; initial memcpy done twice
-// 
+// 03/04/2021       NTSC video timming suport:
+//                  262 lines per frame: upper and lower border reduced 
+//                  scanline time slightly reduced: left botder reduced
+//
 
 #include "memory.h"
 
@@ -21,16 +25,43 @@
 #include "cvideo.h"
 #include "cvideo.pio.h"     // The assembled PIO code
 
+// Comment line bellow to generate original PAL version
+#define NTSC
+
 #define state_machine 0     // The PIO state machine to use
 #define width 256           // Bitmap width in pixels
 #define height 192          // Bitmap height in pixels
 #define hsync_bp1 24        // Length of pulse at 0.0v
 #define hsync_bp2 48        // Length of pulse at 0.3v
-#define hdots 382           // Data for hsync including back porch
 #define piofreq 7.0f        // Clock frequence of state machine
 #define border_colour 11    // The border colour
 
+#ifdef NTSC
+
+#define hdots 379           // Data for hsync including back porch
+#define pixel_start hsync_bp1 + hsync_bp2 + 15  // Where the pixel data starts in pixel_buffer
+
+#define FIRST_LINE_UBORDER  6
+#define LAST_LINE_UBORDER   47
+#define FIRST_LINE_LBORDER  239
+#define LAST_LINE_LBORDER   259
+#define FIRST_LINE_LVSINC   260
+#define LAST_LINE_LVSINC    262
+
+#else
+
+#define hdots 382           // Data for hsync including back porch
 #define pixel_start hsync_bp1 + hsync_bp2 + 18  // Where the pixel data starts in pixel_buffer
+
+#define FIRST_LINE_UBORDER  6
+#define LAST_LINE_UBORDER   68
+#define FIRST_LINE_LBORDER  260
+#define LAST_LINE_LBORDER   309
+#define FIRST_LINE_LVSINC   310
+#define LAST_LINE_LVSINC    312
+
+#endif
+
 
 uint dma_channel;           // DMA channel for transferring hsync data to PIO
 uint vline;                 // Current video line being processed
@@ -135,14 +166,14 @@ void cvideo_dma_handler(void) {
             memcpy(&pixel_buffer[bline & 1][pixel_start], &bitmap[bline], width);
             break;
         case 4 ... 5:
-        case 310 ... 312:
+        case FIRST_LINE_LVSINC ... LAST_LINE_LVSINC:
             dma_channel_set_read_addr(dma_channel, vsync_ss, true);
             break;
 
         // Then the border scanlines
         //
-        case 6 ... 68:
-        case 260 ... 309:
+        case FIRST_LINE_UBORDER ... LAST_LINE_UBORDER:
+        case FIRST_LINE_LBORDER ...  LAST_LINE_LBORDER:
             dma_channel_set_read_addr(dma_channel, border, true);
             break;
 
@@ -157,7 +188,7 @@ void cvideo_dma_handler(void) {
 
     // Increment and wrap the counters
     //
-    if(vline++ >= 312) {    // If we've gone past the bottom scanline then
+    if(vline++ >= LAST_LINE_LVSINC) {    // If we've gone past the bottom scanline then
         vline = 1;		    // Reset the scanline counter
         bline = 0;		    // And the pixel buffer row index counter
     }
